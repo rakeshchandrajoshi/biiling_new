@@ -34,6 +34,7 @@ BORDER = colors.HexColor("#CFD8E3")
 LIGHT = colors.HexColor("#F7F9FC")
 WHITE = colors.white
 DEFAULT_NAME = "SOLAR RAYS ENERGY SOLUTIONS LLP"
+DEFAULT_SERVICE_AREA = "All over Uttar Pradesh"
 DEFAULT_ADDRESS = "12A/220, VRINDAVAN COLONY Utrahtia Railway Station Lucknow, Lucknow, Uttar Pradesh, 226029"
 
 
@@ -95,8 +96,10 @@ def _header_footer(canvas, doc, settings):
     canvas.drawString(43*mm, PAGE_H - 21.1*mm, str(settings.get("tagline") or "Solar Power & Energy Solutions")[:75])
     legal_line = f"GSTIN: {settings.get('gstin','')}     State Code: {settings.get('state_code','09')}     State: {settings.get('state','Uttar Pradesh')}"
     canvas.drawString(43*mm, PAGE_H - 26*mm, legal_line[:110])
+    canvas.drawString(43*mm, PAGE_H - 30.6*mm,
+                      f"Service Area: {settings.get('service_area') or DEFAULT_SERVICE_AREA}"[:110])
     canvas.setStrokeColor(BORDER)
-    canvas.line(16*mm, PAGE_H - 33*mm, PAGE_W - 16*mm, PAGE_H - 33*mm)
+    canvas.line(16*mm, PAGE_H - 35*mm, PAGE_W - 16*mm, PAGE_H - 35*mm)
 
     canvas.setStrokeColor(DARK)
     canvas.line(16*mm, 16*mm, PAGE_W-16*mm, 16*mm)
@@ -202,7 +205,7 @@ def generate_quote_pdf(data: Dict[str, Any]) -> bytes:
     ss = styles()
     out = BytesIO()
     doc = BaseDocTemplate(out, pagesize=A4, leftMargin=17*mm, rightMargin=17*mm,
-                          topMargin=37*mm, bottomMargin=20*mm,
+                          topMargin=39*mm, bottomMargin=20*mm,
                           title=f"Solar quotation {data.get('quote_ref', '')}",
                           author=str(settings.get("company_name") or DEFAULT_NAME).upper())
     frame = Frame(doc.leftMargin, doc.bottomMargin, doc.width, doc.height, leftPadding=0,
@@ -236,6 +239,7 @@ def generate_quote_pdf(data: Dict[str, Any]) -> bytes:
         ("Registered address", registered_address),
         ("GSTIN", settings.get("gstin", "")),
         ("State code / State", f"{settings.get('state_code', '09')} / {settings.get('state', 'Uttar Pradesh')}"),
+        ("Service Area", settings.get("service_area") or DEFAULT_SERVICE_AREA),
     ], ss))
     story.append(safe_para("Project Snapshot", ss["h2"]))
     story.append(basic_table([
@@ -307,6 +311,7 @@ def generate_quote_pdf(data: Dict[str, Any]) -> bytes:
         ("Registered address", registered_address),
         ("GSTIN", settings.get("gstin", "")),
         ("State code / State", f"{settings.get('state_code', '09')} / {settings.get('state', 'Uttar Pradesh')}"),
+        ("Service Area", settings.get("service_area") or DEFAULT_SERVICE_AREA),
         ("Website", settings.get("website", "")),
         ("Email / Phone", " / ".join(filter(None, [settings.get("email", ""), settings.get("phone1", ""), settings.get("phone2", "")]))),
     ], ss))
