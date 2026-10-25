@@ -29,6 +29,8 @@ DB_PATH = ROOT / "solar_quotes.db"
 LOGO_PATH = ROOT / "LOGO_SOLARNEW.jpg"
 COMPANY_NAME = "SOLAR RAYS ENERGY SOLUTIONS LLP"
 SERVICE_AREA = "All over Uttar Pradesh"
+UPNEDA_VENDOR_CODE = "LKO2602161706"
+SIGNATORY_NAME = "Kanchan Tiwari"
 COMPANY_ADDRESS = "12A/220, VRINDAVAN COLONY Utrahtia Railway Station Lucknow, Lucknow, Uttar Pradesh, 226029"
 
 st.set_page_config(page_title="Solar Rays | Quotation Management", page_icon="☀️", layout="wide")
@@ -39,7 +41,9 @@ st.markdown("""
             background:linear-gradient(110deg,#fff5d1, #ffffff 55%, #eefbf0); margin-bottom:12px;}
 .sr-banner h1 {font-size:1.65rem; margin:0 0 6px 0; color:#142336;}
 .sr-banner p {margin:0; color:#48586c; font-size:.95rem;}
-.sr-legal {margin:8px 0 12px 0; line-height:1.55; color:#3f5265;}
+/* Company statutory and service details: 2px larger than standard 16px body text. */
+.sr-regulatory {margin:2px 0 12px 0; font-size:18px; font-weight:700;
+                line-height:1.55; color:#172438;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -54,6 +58,8 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     "state_code": "09",
     "state": "Uttar Pradesh",
     "service_area": SERVICE_AREA,
+    "upneda_vendor_code": UPNEDA_VENDOR_CODE,
+    "authorized_signatory_name": SIGNATORY_NAME,
     "registered_address": COMPANY_ADDRESS,
     "office_address": COMPANY_ADDRESS,
     "bank_account_name": COMPANY_NAME,
@@ -347,12 +353,20 @@ with head_text:
         f"<h1>{html.escape(settings['company_name'].upper())}</h1>"
         "<p>Solar Quotation Management · Design, price and download professional solar proposals</p>"
         "</div>", unsafe_allow_html=True)
+# Keep the address at its original size, and emphasize the three regulatory lines.
 st.markdown(
-    f"**Registered Address:** {settings.get('registered_address') or COMPANY_ADDRESS}  \n"
-    f"**GSTIN:** {settings.get('gstin', '')}  |  "
-    f"**State Code:** {settings.get('state_code', '09')}  |  "
-    f"**State:** {settings.get('state', 'Uttar Pradesh')}  \n"
-    f"**Service Area:** {settings.get('service_area', SERVICE_AREA)}")
+    f"**Registered Address:** {settings.get('registered_address') or COMPANY_ADDRESS}"
+)
+st.markdown(
+    "<div class='sr-regulatory'>"
+    f"GSTIN: {html.escape(str(settings.get('gstin', '')))} &nbsp;&nbsp; "
+    f"State Code: {html.escape(str(settings.get('state_code', '09')))} &nbsp;&nbsp; "
+    f"State: {html.escape(str(settings.get('state', 'Uttar Pradesh')))}<br>"
+    f"Service Area: {html.escape(str(settings.get('service_area') or SERVICE_AREA))}<br>"
+    f"UPNEDA Vendor Code: {html.escape(str(settings.get('upneda_vendor_code') or UPNEDA_VENDOR_CODE))}"
+    "</div>",
+    unsafe_allow_html=True,
+)
 
 new_tab, history_tab, settings_tab = st.tabs(
     ["➕ New Quotation", "📚 Quotation History", "⚙️ Company Settings"])
@@ -602,6 +616,8 @@ with settings_tab:
         state_code = s2.text_input("State Code", value=settings.get("state_code", "09"))
         state = s2.text_input("State", value=settings.get("state", "Uttar Pradesh"))
         service_area = s2.text_input("Service Area", value=settings.get("service_area", SERVICE_AREA))
+        upneda_vendor_code = s2.text_input("UPNEDA Vendor Code", value=settings.get("upneda_vendor_code") or UPNEDA_VENDOR_CODE)
+        authorized_signatory_name = s2.text_input("Authorized signatory name", value=settings.get("authorized_signatory_name") or SIGNATORY_NAME)
         address = s2.text_area("Registered / office address", value=settings.get("registered_address", COMPANY_ADDRESS), height=94)
         st.markdown("#### Bank Details")
         b1, b2 = st.columns(2)
@@ -610,8 +626,6 @@ with settings_tab:
         bank_account = b2.text_input("Account number", value=settings.get("bank_account", ""))
         ifsc = b2.text_input("IFSC", value=settings.get("ifsc", ""))
         bank_branch = b2.text_input("Branch", value=settings.get("bank_branch", ""))
-        if bank_account.strip() == "9876543210":
-            st.warning("SAMPLE BANK DETAILS ONLY — NOT FOR PAYMENT. Replace the sample account number before sending real quotations.")
         intro_text = st.text_area("Company introduction for PDF", value=settings.get("intro_text", ""), height=94)
         st.markdown("#### Logo")
         preview = logo_preview(settings)
@@ -631,6 +645,8 @@ with settings_tab:
                 "email": email.strip(), "phone1": phone1.strip(), "phone2": phone2.strip(),
                 "gstin": gstin.strip(), "state_code": state_code.strip(), "state": state.strip(),
                 "service_area": service_area.strip(),
+                "upneda_vendor_code": upneda_vendor_code.strip(),
+                "authorized_signatory_name": authorized_signatory_name.strip(),
                 "registered_address": address.strip(), "office_address": address.strip(),
                 "bank_account_name": account_name.strip(), "bank_name": bank_name.strip(),
                 "bank_account": bank_account.strip(), "ifsc": ifsc.strip(),
