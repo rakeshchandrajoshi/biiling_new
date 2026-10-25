@@ -19,12 +19,13 @@ from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
 from reportlab.lib.utils import ImageReader, simpleSplit
 from reportlab.platypus import (
-    BaseDocTemplate, Frame, Image, PageBreak, PageTemplate,
+    BaseDocTemplate, Frame, Image, KeepTogether, PageBreak, PageTemplate,
     Paragraph, Spacer, Table, TableStyle,
 )
 
 ROOT = Path(__file__).resolve().parent
 DEFAULT_LOGO_PATH = ROOT / "LOGO_SOLARNEW.jpg"
+SIGNATURE_IMAGE_PATH = ROOT / "SIGNATURE_KANCHAN_TIWARI.png"
 PAGE_W, PAGE_H = A4
 SOLAR = colors.HexColor("#F6B80E")
 DARK = colors.HexColor("#B9810A")
@@ -35,6 +36,8 @@ LIGHT = colors.HexColor("#F7F9FC")
 WHITE = colors.white
 DEFAULT_NAME = "SOLAR RAYS ENERGY SOLUTIONS LLP"
 DEFAULT_SERVICE_AREA = "All over Uttar Pradesh"
+DEFAULT_VENDOR_CODE = "LKO2602161706"
+DEFAULT_SIGNATORY_NAME = "Kanchan Tiwari"
 DEFAULT_ADDRESS = "12A/220, VRINDAVAN COLONY Utrahtia Railway Station Lucknow, Lucknow, Uttar Pradesh, 226029"
 
 
@@ -94,12 +97,17 @@ def _header_footer(canvas, doc, settings):
     canvas.setFont("Helvetica", 7.4)
     canvas.setFillColor(SLATE)
     canvas.drawString(43*mm, PAGE_H - 21.1*mm, str(settings.get("tagline") or "Solar Power & Energy Solutions")[:75])
+    # Regulatory details were previously 7.4 pt normal; render at 9.4 pt bold (+2 pt).
+    canvas.setFont("Helvetica-Bold", 9.4)
+    canvas.setFillColor(NAVY)
     legal_line = f"GSTIN: {settings.get('gstin','')}     State Code: {settings.get('state_code','09')}     State: {settings.get('state','Uttar Pradesh')}"
     canvas.drawString(43*mm, PAGE_H - 26*mm, legal_line[:110])
     canvas.drawString(43*mm, PAGE_H - 30.6*mm,
                       f"Service Area: {settings.get('service_area') or DEFAULT_SERVICE_AREA}"[:110])
+    canvas.drawString(43*mm, PAGE_H - 35.2*mm,
+                      f"UPNEDA Vendor Code: {settings.get('upneda_vendor_code') or DEFAULT_VENDOR_CODE}"[:110])
     canvas.setStrokeColor(BORDER)
-    canvas.line(16*mm, PAGE_H - 35*mm, PAGE_W - 16*mm, PAGE_H - 35*mm)
+    canvas.line(16*mm, PAGE_H - 39.5*mm, PAGE_W - 16*mm, PAGE_H - 39.5*mm)
 
     canvas.setStrokeColor(DARK)
     canvas.line(16*mm, 16*mm, PAGE_W-16*mm, 16*mm)
@@ -160,6 +168,31 @@ def detail_table(records, columns, widths, ss):
     return table
 
 
+def _signatory_block(settings: Dict[str, Any], ss: Dict[str, ParagraphStyle]):
+    """Signature/stamp supplied by the company, printed above the signatory name.
+
+    The image must be deployed alongside pdf_engine.py. Preserve the uploaded
+    signature exactly; only its display dimensions are scaled proportionally.
+    """
+    signatory = str(settings.get("authorized_signatory_name") or DEFAULT_SIGNATORY_NAME).strip()
+    block = []
+    if SIGNATURE_IMAGE_PATH.is_file():
+        try:
+            stamp = Image(str(SIGNATURE_IMAGE_PATH))
+            max_side = 36 * mm
+            factor = min(max_side / stamp.imageWidth, max_side / stamp.imageHeight)
+            stamp.drawWidth = stamp.imageWidth * factor
+            stamp.drawHeight = stamp.imageHeight * factor
+            stamp.hAlign = "LEFT"
+            block.extend([stamp, Spacer(1, 1 * mm)])
+        except Exception:
+            # If an image cannot be read, the printed signatory name remains.
+            pass
+    block.append(safe_para(signatory, ss["bold"]))
+    block.append(safe_para("Authorized Signatory", ss["small"]))
+    return KeepTogether(block)
+
+
 def default_boq(project: Dict[str, Any]) -> List[Dict[str, Any]]:
     cap = float(project.get("capacity_kw", 5) or 5)
     watt = int(project.get("panel_wattage", 580) or 580)
@@ -205,7 +238,7 @@ def generate_quote_pdf(data: Dict[str, Any]) -> bytes:
     ss = styles()
     out = BytesIO()
     doc = BaseDocTemplate(out, pagesize=A4, leftMargin=17*mm, rightMargin=17*mm,
-                          topMargin=39*mm, bottomMargin=20*mm,
+                          topMargin=43*mm, bottomMargin=20*mm,
                           title=f"Solar quotation {data.get('quote_ref', '')}",
                           author=str(settings.get("company_name") or DEFAULT_NAME).upper())
     frame = Frame(doc.leftMargin, doc.bottomMargin, doc.width, doc.height, leftPadding=0,
@@ -240,6 +273,7 @@ def generate_quote_pdf(data: Dict[str, Any]) -> bytes:
         ("GSTIN", settings.get("gstin", "")),
         ("State code / State", f"{settings.get('state_code', '09')} / {settings.get('state', 'Uttar Pradesh')}"),
         ("Service Area", settings.get("service_area") or DEFAULT_SERVICE_AREA),
+        ("UPNEDA Vendor Code", settings.get("upneda_vendor_code") or DEFAULT_VENDOR_CODE),
     ], ss))
     story.append(safe_para("Project Snapshot", ss["h2"]))
     story.append(basic_table([
@@ -312,13 +346,14 @@ def generate_quote_pdf(data: Dict[str, Any]) -> bytes:
         ("GSTIN", settings.get("gstin", "")),
         ("State code / State", f"{settings.get('state_code', '09')} / {settings.get('state', 'Uttar Pradesh')}"),
         ("Service Area", settings.get("service_area") or DEFAULT_SERVICE_AREA),
+        ("UPNEDA Vendor Code", settings.get("upneda_vendor_code") or DEFAULT_VENDOR_CODE),
         ("Website", settings.get("website", "")),
         ("Email / Phone", " / ".join(filter(None, [settings.get("email", ""), settings.get("phone1", ""), settings.get("phone2", "")]))),
     ], ss))
-    story.append(Spacer(1, 5*mm))
+    story.append(Spacer(1, 4*mm))
     story.append(safe_para(f"For {company_name}", ss["bold"]))
-    story.append(Spacer(1, 5*mm))
-    story.append(safe_para("Authorized Signatory", ss["small"]))
+    story.append(Spacer(1, 1*mm))
+    story.append(_signatory_block(settings, ss))
 
     doc.build(story)
     return out.getvalue()
