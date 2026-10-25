@@ -25,7 +25,7 @@ from reportlab.platypus import (
 
 ROOT = Path(__file__).resolve().parent
 DEFAULT_LOGO_PATH = ROOT / "LOGO_SOLARNEW.jpg"
-SIGNATURE_IMAGE_PATH = ROOT / "SIGNATURE_KANCHAN.png"
+SIGNATURE_IMAGE_PATH = ROOT / "SIGNATURE.png"
 PAGE_W, PAGE_H = A4
 SOLAR = colors.HexColor("#F6B80E")
 DARK = colors.HexColor("#B9810A")
