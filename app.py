@@ -6,10 +6,14 @@ This is the actual application, NOT an installation or repair script.
 from __future__ import annotations
 
 import base64
+import binascii
+import hashlib
+import hmac
 import html
 import json
 import math
 import sqlite3
+import time
 from datetime import date, datetime
 from io import BytesIO
 from pathlib import Path
@@ -24,6 +28,7 @@ ROOT = Path(__file__).resolve().parent
 DB_PATH = ROOT / "solar_quotes.db"
 LOGO_PATH = ROOT / "LOGO_SOLARNEW.jpg"
 COMPANY_NAME = "SOLAR RAYS ENERGY SOLUTIONS LLP"
+SERVICE_AREA = "All over Uttar Pradesh"
 COMPANY_ADDRESS = "12A/220, VRINDAVAN COLONY Utrahtia Railway Station Lucknow, Lucknow, Uttar Pradesh, 226029"
 
 st.set_page_config(page_title="Solar Rays | Quotation Management", page_icon="☀️", layout="wide")
@@ -48,13 +53,14 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     "gstin": "09AFUFS6953D1ZA",
     "state_code": "09",
     "state": "Uttar Pradesh",
+    "service_area": SERVICE_AREA,
     "registered_address": COMPANY_ADDRESS,
     "office_address": COMPANY_ADDRESS,
     "bank_account_name": COMPANY_NAME,
-    "bank_name": "",
-    "bank_account": "",
-    "ifsc": "",
-    "bank_branch": "",
+    "bank_name": "State bank of India",
+    "bank_account": "9876543210",
+    "ifsc": "SBIN0001237",
+    "bank_branch": "Lucknow",
     "intro_text": (
         "SOLAR RAYS ENERGY SOLUTIONS LLP designs, deploys and maintains high-performance "
         "rooftop solar power systems focused on long-term savings, reliable engineering "
@@ -96,6 +102,14 @@ def load_settings() -> Dict[str, Any]:
     with get_conn() as conn:
         row = conn.execute("SELECT json_data FROM settings WHERE id=1").fetchone()
     saved = json.loads(row["json_data"]) if row else {}
+    # Update only empty fields in databases created by earlier app versions.
+    # Never replace a bank account that a user has already supplied.
+    if saved.get("_bank_service_defaults_version") != 1:
+        for field in ("bank_account_name", "bank_name", "bank_account", "ifsc", "bank_branch", "service_area"):
+            if not str(saved.get(field, "") or "").strip():
+                saved[field] = DEFAULT_SETTINGS[field]
+        saved["_bank_service_defaults_version"] = 1
+        save_settings(saved)
     result = dict(DEFAULT_SETTINGS)
     result.update(saved)
     result["company_name"] = str(result.get("company_name") or COMPANY_NAME).upper()
@@ -229,6 +243,96 @@ def show_manual_entry_form():
                     st.info("No entries were changed. You can also edit the tables directly.")
 
 
+
+# -------------------------------------------------------------------------
+# Login credentials are stored ONLY in Streamlit secrets (not in source code).
+# Streamlit Community Cloud -> App settings -> Secrets:
+#   [login_users]
+#   admin = "pbkdf2_sha256$600000$SALT_FROM_HELPER$HASH_FROM_HELPER"
+# Run password_hash_helper.py locally to produce the complete hash.
+# -------------------------------------------------------------------------
+MAX_LOGIN_ATTEMPTS = 5
+LOGIN_COOLDOWN_SECONDS = 300
+
+
+def _login_users() -> Dict[str, str]:
+    try:
+        users = st.secrets["login_users"]
+        return {str(username): str(encoded) for username, encoded in users.items()}
+    except (FileNotFoundError, KeyError):
+        return {}
+
+
+def _verify_password(password: str, encoded: str) -> bool:
+    """Verify a per-user salted PBKDF2-SHA256 password hash, in constant time."""
+    try:
+        scheme, rounds, salt_text, expected_text = encoded.split("$", 3)
+        iterations = int(rounds)
+        if scheme != "pbkdf2_sha256" or not (100_000 <= iterations <= 2_000_000):
+            return False
+        salt = base64.urlsafe_b64decode(salt_text)
+        expected = base64.urlsafe_b64decode(expected_text)
+        if len(salt) < 16 or len(expected) != 32:
+            return False
+        actual = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations)
+        return hmac.compare_digest(actual, expected)
+    except (ValueError, TypeError, binascii.Error, UnicodeError):
+        return False
+
+
+def require_login() -> None:
+    """Gate all pages, history, settings and PDF downloads behind authentication."""
+    users = _login_users()
+    if not users:
+        st.error("Login is not configured. Add [login_users] credentials in the Streamlit app's Secrets settings.")
+        st.caption("Generate password hashes locally using password_hash_helper.py; never upload actual secrets to GitHub.")
+        st.stop()
+
+    user = st.session_state.get("authenticated_user")
+    if user and user in users and st.session_state.get("authenticated_hash") == users[user]:
+        st.sidebar.caption(f"Signed in: {user}")
+        if st.sidebar.button("Log out", key="logout_user"):
+            st.session_state.clear()
+            st.rerun()
+        return
+
+    # Clear sessions for deleted users or accounts whose password was changed.
+    st.session_state.pop("authenticated_user", None)
+    st.session_state.pop("authenticated_hash", None)
+    st.title("SOLAR RAYS ENERGY SOLUTIONS LLP")
+    st.subheader("Authorized User Login")
+    st.caption("Enter your assigned user ID and password to access quotations and company settings.")
+    blocked_until = float(st.session_state.get("login_blocked_until", 0))
+    if time.monotonic() < blocked_until:
+        remaining = int(blocked_until - time.monotonic()) + 1
+        st.error(f"Too many unsuccessful attempts. Try again in approximately {remaining} seconds.")
+        st.stop()
+
+    with st.form("login_form"):
+        username = st.text_input("User ID").strip()
+        password = st.text_input("Password", type="password")
+        submit = st.form_submit_button("Log in", type="primary")
+    if submit:
+        stored = users.get(username)
+        if stored is not None and _verify_password(password, stored):
+            st.session_state["authenticated_user"] = username
+            st.session_state["authenticated_hash"] = stored
+            st.session_state["login_failures"] = 0
+            st.session_state.pop("login_blocked_until", None)
+            st.rerun()
+        else:
+            attempts = int(st.session_state.get("login_failures", 0)) + 1
+            st.session_state["login_failures"] = attempts
+            if attempts >= MAX_LOGIN_ATTEMPTS:
+                st.session_state["login_blocked_until"] = time.monotonic() + LOGIN_COOLDOWN_SECONDS
+                st.session_state["login_failures"] = 0
+                st.error("Too many unsuccessful login attempts. Please try again later.")
+            else:
+                st.error("Invalid user ID or password.")
+    st.stop()
+
+
+require_login()
 init_db()
 settings = load_settings()
 
@@ -247,7 +351,8 @@ st.markdown(
     f"**Registered Address:** {settings.get('registered_address') or COMPANY_ADDRESS}  \n"
     f"**GSTIN:** {settings.get('gstin', '')}  |  "
     f"**State Code:** {settings.get('state_code', '09')}  |  "
-    f"**State:** {settings.get('state', 'Uttar Pradesh')}")
+    f"**State:** {settings.get('state', 'Uttar Pradesh')}  \n"
+    f"**Service Area:** {settings.get('service_area', SERVICE_AREA)}")
 
 new_tab, history_tab, settings_tab = st.tabs(
     ["➕ New Quotation", "📚 Quotation History", "⚙️ Company Settings"])
@@ -496,6 +601,7 @@ with settings_tab:
         gstin = s2.text_input("GSTIN", value=settings.get("gstin", ""))
         state_code = s2.text_input("State Code", value=settings.get("state_code", "09"))
         state = s2.text_input("State", value=settings.get("state", "Uttar Pradesh"))
+        service_area = s2.text_input("Service Area", value=settings.get("service_area", SERVICE_AREA))
         address = s2.text_area("Registered / office address", value=settings.get("registered_address", COMPANY_ADDRESS), height=94)
         st.markdown("#### Bank Details")
         b1, b2 = st.columns(2)
@@ -504,6 +610,8 @@ with settings_tab:
         bank_account = b2.text_input("Account number", value=settings.get("bank_account", ""))
         ifsc = b2.text_input("IFSC", value=settings.get("ifsc", ""))
         bank_branch = b2.text_input("Branch", value=settings.get("bank_branch", ""))
+        if bank_account.strip() == "9876543210":
+            st.warning("SAMPLE BANK DETAILS ONLY — NOT FOR PAYMENT. Replace the sample account number before sending real quotations.")
         intro_text = st.text_area("Company introduction for PDF", value=settings.get("intro_text", ""), height=94)
         st.markdown("#### Logo")
         preview = logo_preview(settings)
@@ -522,6 +630,7 @@ with settings_tab:
                 "tagline": tagline.strip(), "website": website.strip(),
                 "email": email.strip(), "phone1": phone1.strip(), "phone2": phone2.strip(),
                 "gstin": gstin.strip(), "state_code": state_code.strip(), "state": state.strip(),
+                "service_area": service_area.strip(),
                 "registered_address": address.strip(), "office_address": address.strip(),
                 "bank_account_name": account_name.strip(), "bank_name": bank_name.strip(),
                 "bank_account": bank_account.strip(), "ifsc": ifsc.strip(),
