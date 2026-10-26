@@ -1,11 +1,8 @@
-name: Keep Solar Arrays Streamlit App Awake
+name: Check and wake Solar Rays Streamlit
 
 on:
   schedule:
-    # Run every 4 hours
-    - cron: '17 */4 * * *'
-
-  # Allow manual execution
+    - cron: '17 */4 * * *'  # Every 4 hours (UTC)
   workflow_dispatch:
 
 permissions:
@@ -13,70 +10,91 @@ permissions:
 
 jobs:
   keep-alive:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
-
     steps:
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: '3.11'
 
-      - name: Install browser automation
+      - name: Install Playwright browser
         run: |
-          python -m pip install playwright
+          python -m pip install --disable-pip-version-check playwright
           python -m playwright install --with-deps chromium
 
-      - name: Visit Streamlit App
+      - name: Open app and click wake button if present
         env:
           APP_URL: https://solarraysenergy.streamlit.app/
         run: |
           python - <<'PY'
           import os
           import re
-          from playwright.sync_api import (
-              sync_playwright,
-              TimeoutError as BrowserTimeout
-          )
+          import time
+          from pathlib import Path
+          from playwright.sync_api import sync_playwright
 
           with sync_playwright() as p:
               browser = p.chromium.launch(headless=True)
-              page = browser.new_page()
-
-              page.goto(
-                  os.environ["APP_URL"],
-                  wait_until="domcontentloaded",
-                  timeout=60000
-              )
-
-              print("Opened:", page.url)
-
-              if "share.streamlit.io/-/auth/" in page.url:
-                  raise RuntimeError("App requires authentication")
-
-              wake_button = page.get_by_role(
-                  "button",
-                  name=re.compile("get this app back up", re.I)
-              )
-
+              page = browser.new_page(viewport={"width": 1366, "height": 900})
+              page.on("pageerror", lambda err: print("Browser JS error:", str(err)[:350], flush=True))
               try:
-                  wake_button.wait_for(
-                      state="visible",
-                      timeout=8000
-                  )
-                  wake_button.click()
-                  print("Wake-up button clicked")
-              except BrowserTimeout:
-                  print("No wake-up button visible")
+                  response = page.goto(os.environ["APP_URL"], wait_until="domcontentloaded", timeout=60000)
+                  print("Opened URL:", page.url, flush=True)
+                  print("HTTP response:", response.status if response else "no response", flush=True)
 
-              page.locator(
-                  '[data-testid="stApp"]'
-              ).wait_for(
-                  state="visible",
-                  timeout=90000
-              )
+                  for attempt in range(12):
+                      print(f"Check {attempt + 1}/12; URL={page.url}", flush=True)
+                      # Works for a normal Streamlit page, including the app's own login form.
+                      if any(frame.locator('[data-testid="stApp"]').is_visible() for frame in page.frames):
+                          print("Success: Streamlit application rendered.", flush=True)
+                          break
 
-              page.wait_for_timeout(10000)
-              print("App visited successfully")
-              browser.close()
+                      # Streamlit Community Cloud's sleeping-app page has a wake button.
+                      for frame in page.frames:
+                          button = frame.get_by_role(
+                              "button", name=re.compile(r"get this app back up|wake.*app", re.I)
+                          )
+                          if button.count() and button.first.is_visible():
+                              print("Sleeping app: clicking wake-up button.", flush=True)
+                              button.first.click(timeout=5000)
+                              break
+                      else:
+                          print("No wake-up button detected yet.", flush=True)
+
+                      page.wait_for_timeout(7000)
+                      # Retry the initial navigation if the cloud landing page stays unresponsive.
+                      if attempt in (4, 8):
+                          try:
+                              page.reload(wait_until="domcontentloaded", timeout=45000)
+                          except Exception as exc:
+                              print("Reload error:", str(exc)[:350], flush=True)
+                  else:
+                      title = page.title()
+                      print("FINAL URL:", page.url, flush=True)
+                      print("PAGE TITLE:", title, flush=True)
+                      print("PAGE TEXT (first 1200 chars):", page.locator("body").inner_text(timeout=5000)[:1200], flush=True)
+                      raise RuntimeError("Streamlit did not render within the retry window. See uploaded screenshot and HTML.")
+              except Exception:
+                  # Capture actual page seen by GitHub Actions for diagnosis.
+                  try:
+                      page.screenshot(path="streamlit-debug.png", full_page=True, timeout=12000)
+                      Path("streamlit-debug.html").write_text(page.content(), encoding="utf-8")
+                      print("Saved streamlit-debug.png and streamlit-debug.html", flush=True)
+                  except Exception as diagnostic_error:
+                      print("Could not save browser diagnostics:", diagnostic_error, flush=True)
+                  raise
+              finally:
+                  browser.close()
           PY
+
+      - name: Upload diagnostics if app did not load
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: streamlit-browser-diagnostics
+          path: |
+            streamlit-debug.png
+            streamlit-debug.html
+          if-no-files-found: warn
+          retention-days: 7
